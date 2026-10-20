@@ -172,8 +172,9 @@ jobs:
         run: |
           set -euo pipefail
           app="assets/hello-craft-$VERSION-linux-$ARCH.AppImage"
-          test -x "$app"
           test -s "$app.zsync"
+          # Workflow artifacts do not keep file modes; a downloaded AppImage needs chmod +x too.
+          chmod +x "$app"
           out="$(APPIMAGE_EXTRACT_AND_RUN=1 "$app" --version)"
           echo "$out"
           test "$out" = "hello-craft $VERSION"
