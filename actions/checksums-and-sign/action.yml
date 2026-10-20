@@ -1,0 +1,38 @@
+name: Checksums and signature
+description: >
+  Writes SHA256SUMS.txt over every file in a folder and, when a minisign secret key is given, signs
+  it as SHA256SUMS.txt.minisig with the trusted comment "<display-name> <tag>" (the Craft launcher
+  requires the trusted comment to name the release's tag). Linux runners.
+inputs:
+  dir: { description: "The folder of release assets.", required: true }
+  tag: { description: "The release tag, e.g. v1.2.3.", required: true }
+  display-name: { description: "Product name for the trusted comment.", required: true }
+  signing-key: { description: "Unencrypted minisign secret key (RELEASE_SIGNING_KEY); empty to skip signing.", required: false, default: "" }
+  self-test: { description: "With no key: sign with a throwaway key and verify, then drop the signature.", required: false, default: "false" }
+outputs:
+  signed:
+    description: "'true' when SHA256SUMS.txt.minisig was written."
+    value: ${{ steps.sign.outputs.signed }}
+runs:
+  using: composite
+  steps:
+    - name: SHA256SUMS.txt
+      shell: bash
+      working-directory: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        rm -f SHA256SUMS.txt SHA256SUMS.txt.minisig
+        find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs -r -d '\n' sha256sum --binary -- \
+          | sed 's/ \*/  /' >"$RUNNER_TEMP/SHA256SUMS.txt"
+        mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
+        cat SHA256SUMS.txt
+    - id: sign
+      name: Sign the checksums
+      shell: bash
+      working-directory: ${{ inputs.dir }}
+      env:
+        RELEASE_SIGNING_KEY: ${{ inputs.signing-key }}
+        TAG: ${{ inputs.tag }}
+        DISPLAY_NAME: ${{ inputs.display-name }}
+        SELF_TEST: ${{ inputs.self-test }}
+      run: bash "$GITHUB_ACTION_PATH/sign.sh"

@@ -1,0 +1,8 @@
+# Packaging metadata read by 685ks/craft-actions (release-rust-app.yml).
+id = "hello-craft"
+display_name = "HelloCraft"
+bundle_id = "app.freedev.ainz.ks.HelloCraft"
+description = "A tiny app that exercises the craft-actions release workflow"
+categories = ["Utility", "Development"]
+icon_png = "packaging/icon.png"
+license = "MIT OR Apache-2.0"

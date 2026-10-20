@@ -1,0 +1,7 @@
+rules:
+  self-repository:
+    # release-rust-app.yml is called from other repositories. Its steps run composite actions from
+    # a checkout of craft-actions made at the exact commit of the running workflow (read from the
+    # job's OIDC token), under ./.craft-actions; those ./ paths are that checkout, not the caller.
+    # ci.yml calls the workflow with ./ on purpose, to test the commit under review.
+    disable: true

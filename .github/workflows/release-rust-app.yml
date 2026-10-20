@@ -1,0 +1,602 @@
+# Builds a Rust desktop app for Windows x64, macOS (universal) and Linux (x86_64, aarch64), packages
+# it, writes checksums, an optional minisign signature, a CycloneDX SBOM, an update feed and build
+# provenance, and creates (or updates) the GitHub Release v<version> on the calling repository.
+#
+# Callers (see README.md):
+#
+#   jobs:
+#     release:
+#       uses: 685ks/craft-actions/.github/workflows/release-rust-app.yml@main
+#       with: { app-id: photocraft, display-name: PhotoCraft, bundle-id: app.freedev.ainz.ks.PhotoCraft,
+#               version: "${{ inputs.version }}", package: photocraft, bin: photocraft, features: "",
+#               publish: "${{ inputs.publish }}", prerelease: "${{ inputs.prerelease }}" }
+#       secrets: inherit
+#       permissions: { contents: write, id-token: write, attestations: write }
+#
+# The composite actions and scripts this workflow runs are checked out from the same commit of
+# craft-actions as this file (read from the job's OIDC token), so a caller pinned to a tag or SHA
+# gets exactly that version of every step.
+
+name: Release a Rust app
+
+on:
+  workflow_call:
+    inputs:
+      app-id:
+        description: Release asset stem, lowercase (e.g. photocraft). Assets are <app-id>-<version>-<os>-<arch>[-portable].<ext>.
+        type: string
+        required: true
+      display-name:
+        description: Human-readable product name (e.g. PhotoCraft); also the macOS bundle name <display-name>.app.
+        type: string
+        required: true
+      bundle-id:
+        description: Reverse-DNS id (e.g. app.freedev.ainz.ks.PhotoCraft).
+        type: string
+        required: true
+      version:
+        description: Version to release (semver, e.g. 1.2.3 or 1.2.3-rc.1; a leading v is dropped). The tag is v<version>.
+        type: string
+        required: true
+      package:
+        description: Cargo package that builds the app binary.
+        type: string
+        required: true
+      bin:
+        description: Name of the app binary.
+        type: string
+        required: true
+      features:
+        description: Cargo features to enable (comma- or space-separated); empty for the defaults.
+        type: string
+        required: false
+        default: ""
+      publish:
+        description: Publish the GitHub Release. When false it is left as a draft.
+        type: boolean
+        required: false
+        default: false
+      prerelease:
+        description: Mark the release as a pre-release (versions with a "-" always are).
+        type: boolean
+        required: false
+        default: false
+      dry-run:
+        description: Build, package, check and sign everything but create no GitHub Release (the assets are left as the craft-assets artifact).
+        type: boolean
+        required: false
+        default: false
+      working-directory:
+        description: The app's directory inside the repository (its Cargo workspace and packaging/app.toml).
+        type: string
+        required: false
+        default: "."
+      linux-packages:
+        description: Ubuntu packages to install before building on Linux (headers the app links against).
+        type: string
+        required: false
+        default: >-
+          pkg-config libssl-dev libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev
+          libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+    secrets:
+      RELEASE_SIGNING_KEY:
+        description: Unencrypted minisign secret key; signs SHA256SUMS.txt as SHA256SUMS.txt.minisig.
+        required: false
+      MACOS_CERTIFICATE:
+        description: Base64-encoded Developer ID Application certificate (.p12).
+        required: false
+      MACOS_CERTIFICATE_PASSWORD:
+        description: Password of MACOS_CERTIFICATE.
+        required: false
+      APPLE_ID:
+        description: Apple ID used to notarize.
+        required: false
+      APPLE_TEAM_ID:
+        description: Apple Developer team ID.
+        required: false
+      APPLE_APP_PASSWORD:
+        description: App-specific password of APPLE_ID.
+        required: false
+      WINDOWS_CERTIFICATE:
+        description: Base64-encoded code signing certificate (.pfx).
+        required: false
+      WINDOWS_CERTIFICATE_PASSWORD:
+        description: Password of WINDOWS_CERTIFICATE.
+        required: false
+    outputs:
+      version:
+        description: The released version (without the v).
+        value: ${{ jobs.prepare.outputs.version }}
+      tag:
+        description: The release tag, v<version>.
+        value: ${{ jobs.prepare.outputs.tag }}
+      release-url:
+        description: URL of the GitHub Release (empty on a dry run).
+        value: ${{ jobs.release.outputs.url }}
+      assets-artifact:
+        description: Name of the workflow artifact holding every release asset.
+        value: craft-assets
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # to read which craft-actions commit this workflow runs from
+    outputs:
+      actions-repo: ${{ steps.self.outputs.repo }}
+      actions-sha: ${{ steps.self.outputs.sha }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      numeric-version: ${{ steps.meta.outputs.numeric-version }}
+      msi-version: ${{ steps.meta.outputs.msi-version }}
+      description: ${{ steps.meta.outputs.description }}
+      categories: ${{ steps.meta.outputs.categories }}
+      icon-png: ${{ steps.meta.outputs.icon-png }}
+      icon-icns: ${{ steps.meta.outputs.icon-icns }}
+      icon-ico: ${{ steps.meta.outputs.icon-ico }}
+      license: ${{ steps.meta.outputs.license }}
+      homepage: ${{ steps.meta.outputs.homepage }}
+      maintainer: ${{ steps.meta.outputs.maintainer }}
+      publisher: ${{ steps.meta.outputs.publisher }}
+      upgrade-code: ${{ steps.meta.outputs.upgrade-code }}
+      features: ${{ steps.meta.outputs.features }}
+    steps:
+      - id: self
+        name: Find this workflow's commit
+        shell: python3 {0}
+        run: |
+          import base64, json, os, re, sys, urllib.request
+
+          url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+          token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+          if not url or not token:
+              print("::error::the calling job must grant `id-token: write` (see the craft-actions README)")
+              sys.exit(1)
+          req = urllib.request.Request(url + "&audience=craft-actions", headers={"Authorization": f"bearer {token}"})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              jwt = json.load(r)["value"]
+          payload = jwt.split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+          ref, sha = claims.get("job_workflow_ref", ""), claims.get("job_workflow_sha", "")
+          m = re.match(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/\.github/workflows/[^@]+@(.+)$", ref)
+          if not m or not re.fullmatch(r"[0-9a-f]{40}", sha):
+              print(f"::error::unexpected job_workflow_ref {ref!r} / job_workflow_sha {sha!r}")
+              sys.exit(1)
+          print(f"craft-actions: {m.group(1)} at {m.group(2)} ({sha})")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"repo={m.group(1)}\nsha={sha}\n")
+
+      - name: Check out the app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out craft-actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.self.outputs.repo }}
+          ref: ${{ steps.self.outputs.sha }}
+          path: .craft-actions
+          persist-credentials: false
+
+      - id: meta
+        name: Check the inputs and read packaging/app.toml
+        env:
+          APP_ID: ${{ inputs.app-id }}
+          DISPLAY_NAME: ${{ inputs.display-name }}
+          BUNDLE_ID: ${{ inputs.bundle-id }}
+          VERSION: ${{ inputs.version }}
+          PACKAGE: ${{ inputs.package }}
+          BIN: ${{ inputs.bin }}
+          FEATURES: ${{ inputs.features }}
+          PUBLISH: ${{ inputs.publish }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          APP_DIR: ${{ inputs.working-directory }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          case "$APP_DIR" in
+            /* | *..*) echo "::error::working-directory must be a relative path inside the repository"; exit 1 ;;
+          esac
+          python3 .craft-actions/scripts/app_meta.py
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the binaries' glibc requirement stays low.
+          - arch: x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.actions-repo }}
+          ref: ${{ needs.prepare.outputs.actions-sha }}
+          path: .craft-actions
+          persist-credentials: false
+
+      - name: Install system packages
+        env:
+          PACKAGES: ${{ inputs.linux-packages }}
+        run: |
+          set -euo pipefail
+          read -r -a pkgs <<<"$PACKAGES"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends desktop-file-utils zsync "${pkgs[@]}"
+
+      - uses: ./.craft-actions/actions/setup-rust
+        with:
+          targets: ${{ matrix.target }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - id: build
+        uses: ./.craft-actions/actions/build-rust
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          package: ${{ inputs.package }}
+          bin: ${{ inputs.bin }}
+          features: ${{ needs.prepare.outputs.features }}
+          target: ${{ matrix.target }}
+          version: ${{ needs.prepare.outputs.version }}
+
+      - uses: ./.craft-actions/actions/package-linux
+        with:
+          app-id: ${{ inputs.app-id }}
+          display-name: ${{ inputs.display-name }}
+          bundle-id: ${{ inputs.bundle-id }}
+          version: ${{ needs.prepare.outputs.version }}
+          bin: ${{ inputs.bin }}
+          binary: ${{ steps.build.outputs.binary }}
+          arch: ${{ matrix.arch }}
+          description: ${{ needs.prepare.outputs.description }}
+          categories: ${{ needs.prepare.outputs.categories }}
+          icon-png: ${{ needs.prepare.outputs.icon-png }}
+          license: ${{ needs.prepare.outputs.license }}
+          homepage: ${{ needs.prepare.outputs.homepage }}
+          maintainer: ${{ needs.prepare.outputs.maintainer }}
+          repository: ${{ github.repository }}
+          working-directory: ${{ inputs.working-directory }}
+          out-dir: ${{ runner.temp }}/craft-dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: craft-release-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/craft-dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS universal
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.actions-repo }}
+          ref: ${{ needs.prepare.outputs.actions-sha }}
+          path: .craft-actions
+          persist-credentials: false
+
+      - uses: ./.craft-actions/actions/setup-rust
+        with:
+          targets: aarch64-apple-darwin x86_64-apple-darwin
+          working-directory: ${{ inputs.working-directory }}
+
+      - id: arm64
+        uses: ./.craft-actions/actions/build-rust
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          package: ${{ inputs.package }}
+          bin: ${{ inputs.bin }}
+          features: ${{ needs.prepare.outputs.features }}
+          target: aarch64-apple-darwin
+          version: ${{ needs.prepare.outputs.version }}
+
+      - id: x86_64
+        uses: ./.craft-actions/actions/build-rust
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          package: ${{ inputs.package }}
+          bin: ${{ inputs.bin }}
+          features: ${{ needs.prepare.outputs.features }}
+          target: x86_64-apple-darwin
+          version: ${{ needs.prepare.outputs.version }}
+
+      - uses: ./.craft-actions/actions/package-macos
+        with:
+          app-id: ${{ inputs.app-id }}
+          display-name: ${{ inputs.display-name }}
+          bundle-id: ${{ inputs.bundle-id }}
+          version: ${{ needs.prepare.outputs.version }}
+          numeric-version: ${{ needs.prepare.outputs.numeric-version }}
+          bin: ${{ inputs.bin }}
+          binary-arm64: ${{ steps.arm64.outputs.binary }}
+          binary-x86_64: ${{ steps.x86_64.outputs.binary }}
+          icon-png: ${{ needs.prepare.outputs.icon-png }}
+          icon-icns: ${{ needs.prepare.outputs.icon-icns }}
+          working-directory: ${{ inputs.working-directory }}
+          out-dir: ${{ runner.temp }}/craft-dist
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          apple-app-password: ${{ secrets.APPLE_APP_PASSWORD }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: craft-release-macos-universal
+          path: ${{ runner.temp }}/craft-dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows x64
+    needs: prepare
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.actions-repo }}
+          ref: ${{ needs.prepare.outputs.actions-sha }}
+          path: .craft-actions
+          persist-credentials: false
+
+      - uses: ./.craft-actions/actions/setup-rust
+        with:
+          targets: x86_64-pc-windows-msvc
+          working-directory: ${{ inputs.working-directory }}
+
+      - id: build
+        uses: ./.craft-actions/actions/build-rust
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          package: ${{ inputs.package }}
+          bin: ${{ inputs.bin }}
+          features: ${{ needs.prepare.outputs.features }}
+          target: x86_64-pc-windows-msvc
+          version: ${{ needs.prepare.outputs.version }}
+
+      - uses: ./.craft-actions/actions/package-windows
+        with:
+          app-id: ${{ inputs.app-id }}
+          display-name: ${{ inputs.display-name }}
+          bundle-id: ${{ inputs.bundle-id }}
+          version: ${{ needs.prepare.outputs.version }}
+          msi-version: ${{ needs.prepare.outputs.msi-version }}
+          bin: ${{ inputs.bin }}
+          binary: ${{ steps.build.outputs.binary }}
+          description: ${{ needs.prepare.outputs.description }}
+          icon-png: ${{ needs.prepare.outputs.icon-png }}
+          icon-ico: ${{ needs.prepare.outputs.icon-ico }}
+          publisher: ${{ needs.prepare.outputs.publisher }}
+          homepage: ${{ needs.prepare.outputs.homepage }}
+          upgrade-code: ${{ needs.prepare.outputs.upgrade-code }}
+          working-directory: ${{ inputs.working-directory }}
+          out-dir: ${{ runner.temp }}/craft-dist
+          certificate: ${{ secrets.WINDOWS_CERTIFICATE }}
+          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: craft-release-windows-x64
+          path: ${{ runner.temp }}/craft-dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  sbom:
+    name: SBOM
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.actions-repo }}
+          ref: ${{ needs.prepare.outputs.actions-sha }}
+          path: .craft-actions
+          persist-credentials: false
+      - uses: ./.craft-actions/actions/setup-rust
+        with:
+          working-directory: ${{ inputs.working-directory }}
+      - uses: ./.craft-actions/actions/sbom
+        with:
+          app-id: ${{ inputs.app-id }}
+          version: ${{ needs.prepare.outputs.version }}
+          package: ${{ inputs.package }}
+          features: ${{ needs.prepare.outputs.features }}
+          working-directory: ${{ inputs.working-directory }}
+          out-dir: ${{ runner.temp }}/craft-dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: craft-release-sbom
+          path: ${{ runner.temp }}/craft-dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  finalize:
+    name: Checksums, signature and provenance
+    needs: [prepare, linux, macos, windows, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # build provenance (Sigstore)
+      attestations: write # build provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare.outputs.actions-repo }}
+          ref: ${{ needs.prepare.outputs.actions-sha }}
+          path: .craft-actions
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: craft-release-*
+          merge-multiple: true
+          path: assets
+
+      - name: Check the asset names against the launcher's grammar
+        env:
+          APP_ID: ${{ inputs.app-id }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: python3 .craft-actions/scripts/asset_names.py check assets --app-id "$APP_ID" --version "$VERSION" --expect-full
+
+      - name: Write update-feed.json
+        env:
+          APP_ID: ${{ inputs.app-id }}
+          DISPLAY_NAME: ${{ inputs.display-name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          REPOSITORY: ${{ github.repository }}
+          HAS_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY != '' }}
+        run: |
+          python3 .craft-actions/scripts/update_feed.py assets --app-id "$APP_ID" --display-name "$DISPLAY_NAME" \
+            --version "$VERSION" --tag "$TAG" --repository "$REPOSITORY" --prerelease "$PRERELEASE" \
+            --signed "$HAS_SIGNING_KEY"
+
+      - id: sums
+        uses: ./.craft-actions/actions/checksums-and-sign
+        with:
+          dir: assets
+          tag: ${{ needs.prepare.outputs.tag }}
+          display-name: ${{ inputs.display-name }}
+          signing-key: ${{ secrets.RELEASE_SIGNING_KEY }}
+          self-test: ${{ inputs.dry-run }}
+
+      - name: Check the final file set
+        env:
+          APP_ID: ${{ inputs.app-id }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: python3 .craft-actions/scripts/asset_names.py check assets --app-id "$APP_ID" --version "$VERSION" --expect-full
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: assets/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: craft-assets
+          path: assets/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: GitHub Release
+    needs: [prepare, finalize]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the release and its tag
+    outputs:
+      url: ${{ steps.release.outputs.url }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: craft-assets
+          path: assets
+
+      - id: release
+        name: Create or update the release
+        working-directory: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TITLE_NAME: ${{ inputs.display-name }}
+          PUBLISH: ${{ inputs.publish }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          files=()
+          while IFS= read -r f; do files+=("$f"); done < <(find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
+          title="$TITLE_NAME $VERSION"
+
+          # An existing tag must point at the commit these assets were built from.
+          if tag_sha="$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha 2>/dev/null)"; then
+            if [ "$tag_sha" != "$TARGET_SHA" ]; then
+              echo "::error::tag $TAG already exists at $tag_sha, but this build is of $TARGET_SHA"
+              exit 1
+            fi
+          fi
+
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--prerelease=false); fi
+
+          if info="$(gh release view "$TAG" --json isDraft,assets 2>/dev/null)"; then
+            if [ "$(jq -r .isDraft <<<"$info")" != "true" ]; then
+              echo "::error::release $TAG is already published; release a new version instead of replacing its files"
+              exit 1
+            fi
+            echo "draft release $TAG exists: replacing its assets"
+            # Drop assets a previous attempt uploaded that this build does not have.
+            while IFS= read -r old; do
+              keep=false
+              for f in "${files[@]}"; do [ "$f" = "$old" ] && keep=true && break; done
+              if [ "$keep" = false ]; then gh release delete-asset "$TAG" "$old" --yes; fi
+            done < <(jq -r '.assets[].name' <<<"$info")
+            gh release upload "$TAG" "${files[@]}" --clobber
+            gh release edit "$TAG" --title "$title" --target "$TARGET_SHA" "${flags[@]}"
+          else
+            gh release create "$TAG" "${files[@]}" --draft --title "$title" --target "$TARGET_SHA" \
+              --generate-notes "${flags[@]}"
+          fi
+
+          if [ "$PUBLISH" = "true" ]; then
+            # Pre-releases never become releases/latest (so releases/latest/download/update-feed.json
+            # always serves the newest stable version).
+            if [ "$PRERELEASE" = "true" ]; then latest=--latest=false; else latest=--latest; fi
+            gh release edit "$TAG" --draft=false "$latest"
+            echo "published $TAG"
+          else
+            echo "::notice::$TAG is a draft: publish it on GitHub, or run again with publish"
+          fi
+          url="$(gh release view "$TAG" --json url --jq .url)"
+          echo "url=$url" >>"$GITHUB_OUTPUT"
+          echo "### $title: $url" >>"$GITHUB_STEP_SUMMARY"
