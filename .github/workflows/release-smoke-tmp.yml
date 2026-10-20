@@ -1,0 +1,55 @@
+# TEMPORARY: exercises the GitHub Release job (draft create, then update in place), then deletes
+# the draft. Removed before merging.
+name: release-smoke-tmp
+on:
+  push:
+    branches: [claude/project-thread-ggepti]
+permissions: {}
+jobs:
+  first:
+    permissions:
+      contents: write # draft release
+      id-token: write # self commit, provenance
+      attestations: write # provenance
+    uses: ./.github/workflows/release-rust-app.yml
+    with:
+      app-id: hello-craft
+      display-name: HelloCraft
+      bundle-id: app.freedev.ainz.ks.HelloCraft
+      version: 0.0.1-smoke.${{ github.run_number }}
+      package: hello-craft
+      bin: hello-craft
+      working-directory: test-fixtures/hello-craft
+  second:
+    needs: first
+    permissions:
+      contents: write # draft release
+      id-token: write # self commit, provenance
+      attestations: write # provenance
+    uses: ./.github/workflows/release-rust-app.yml
+    with:
+      app-id: hello-craft
+      display-name: HelloCraft
+      bundle-id: app.freedev.ainz.ks.HelloCraft
+      version: 0.0.1-smoke.${{ github.run_number }}
+      package: hello-craft
+      bin: hello-craft
+      working-directory: test-fixtures/hello-craft
+  cleanup:
+    needs: [first, second]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # delete the draft
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v0.0.1-smoke.${{ github.run_number }}
+          URL1: ${{ needs.first.outputs.release-url }}
+          URL2: ${{ needs.second.outputs.release-url }}
+        run: |
+          echo "first: $URL1"; echo "second: $URL2"
+          gh release view "$TAG" --json isDraft,isPrerelease,name,tagName,assets --jq '{isDraft,isPrerelease,name,tagName,n:(.assets|length),assets:[.assets[].name]}' || true
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then echo "tag left behind"; exit 1; fi
