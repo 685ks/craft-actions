@@ -1,0 +1,22 @@
+name: Set up Rust
+description: >
+  Installs the Rust toolchain the app asks for (its rust-toolchain.toml, else stable) with the
+  given targets, using the rustup that every GitHub-hosted runner already has.
+inputs:
+  targets:
+    description: Space-separated target triples to add, e.g. "aarch64-apple-darwin x86_64-apple-darwin".
+    required: false
+    default: ""
+  working-directory:
+    description: The app's directory (where its rust-toolchain.toml would be).
+    required: false
+    default: "."
+runs:
+  using: composite
+  steps:
+    - name: Install the toolchain
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: bash "$GITHUB_ACTION_PATH/setup-rust.sh"

@@ -1,0 +1,25 @@
+name: CycloneDX SBOM
+description: >
+  Writes <out-dir>/<app-id>-<version>-sbom.cdx.json, a CycloneDX (JSON) bill of materials of the
+  app's cargo package and its dependencies, made with cargo-cyclonedx (pinned, SHA-256 checked).
+  Linux x86_64 runners only.
+inputs:
+  app-id: { description: "Release asset stem.", required: true }
+  version: { description: "Release version.", required: true }
+  package: { description: "The cargo package the release is built from.", required: true }
+  features: { description: "Cargo features of the release build.", required: false, default: "" }
+  working-directory: { description: "The app's directory.", required: false, default: "." }
+  out-dir: { description: "Where the SBOM is written.", required: true }
+runs:
+  using: composite
+  steps:
+    - name: Make the SBOM
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        APP_ID: ${{ inputs.app-id }}
+        VERSION: ${{ inputs.version }}
+        PACKAGE: ${{ inputs.package }}
+        FEATURES: ${{ inputs.features }}
+        OUT_DIR: ${{ inputs.out-dir }}
+      run: bash "$GITHUB_ACTION_PATH/sbom.sh"

@@ -1,0 +1,43 @@
+name: Build a Rust binary
+description: >
+  cargo build --release of one binary for one target, with --locked when the workspace has a
+  Cargo.lock. CRAFT_RELEASE_VERSION is set during the build, for apps that want to report it.
+inputs:
+  working-directory:
+    description: The app's directory.
+    required: false
+    default: "."
+  package:
+    description: The cargo package that builds the binary.
+    required: true
+  bin:
+    description: The binary's name.
+    required: true
+  features:
+    description: Cargo features (comma- or space-separated); empty for the defaults.
+    required: false
+    default: ""
+  target:
+    description: The target triple.
+    required: true
+  version:
+    description: The release version.
+    required: true
+outputs:
+  binary:
+    description: Absolute path of the built binary.
+    value: ${{ steps.build.outputs.binary }}
+runs:
+  using: composite
+  steps:
+    - id: build
+      name: cargo build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        BIN: ${{ inputs.bin }}
+        FEATURES: ${{ inputs.features }}
+        TARGET: ${{ inputs.target }}
+        CRAFT_RELEASE_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/build.sh"

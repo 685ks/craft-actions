@@ -1,0 +1,17 @@
+[package]
+name = "hello-craft"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "A tiny app that exercises the craft-actions release workflow"
+publish = false
+
+# A workspace of its own, so it never joins a parent workspace.
+[workspace]
+
+[[bin]]
+name = "hello-craft"
+path = "src/main.rs"
+
+[profile.release]
+strip = true

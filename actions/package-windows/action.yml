@@ -1,0 +1,54 @@
+name: Package for Windows
+description: >
+  Packs a Windows x64 binary as <id>-<version>-windows-x64.msi (WiX Toolset, pinned version) and
+  <id>-<version>-windows-x64-portable.zip. Signs the exe and the MSI with signtool when a code
+  signing certificate is given.
+inputs:
+  app-id: { description: "Release asset stem.", required: true }
+  display-name: { description: "Product name and install folder.", required: true }
+  bundle-id: { description: "Reverse-DNS id (recorded in the MSI comments).", required: true }
+  version: { description: "Release version.", required: true }
+  msi-version: { description: "Numeric MSI ProductVersion.", required: true }
+  bin: { description: "Binary name (without .exe).", required: true }
+  binary: { description: "Path of the built .exe.", required: true }
+  description: { description: "One-line description.", required: true }
+  icon-png: { description: "Square PNG icon, relative to working-directory.", required: true }
+  icon-ico: { description: "Optional .ico, relative to working-directory.", required: false, default: "" }
+  publisher: { description: "MSI Manufacturer (shown as Publisher).", required: true }
+  homepage: { description: "Project URL.", required: true }
+  upgrade-code: { description: "Stable MSI UpgradeCode GUID.", required: true }
+  working-directory: { description: "The app's directory.", required: false, default: "." }
+  out-dir: { description: "Where the packages are written.", required: true }
+  certificate: { description: "Base64 .pfx (WINDOWS_CERTIFICATE).", required: false, default: "" }
+  certificate-password: { description: "Its password (WINDOWS_CERTIFICATE_PASSWORD).", required: false, default: "" }
+runs:
+  using: composite
+  steps:
+    - name: Install WiX
+      shell: pwsh
+      run: |
+        # WiX Toolset 5.0.2 (MS-RL), the same CLI the Craft launcher builds with.
+        dotnet tool install --global wix --version 5.0.2
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        wix --version
+    - name: Package
+      shell: pwsh
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        APP_ID: ${{ inputs.app-id }}
+        DISPLAY_NAME: ${{ inputs.display-name }}
+        BUNDLE_ID: ${{ inputs.bundle-id }}
+        VERSION: ${{ inputs.version }}
+        MSI_VERSION: ${{ inputs.msi-version }}
+        BIN: ${{ inputs.bin }}
+        BINARY: ${{ inputs.binary }}
+        DESCRIPTION: ${{ inputs.description }}
+        ICON_PNG: ${{ inputs.icon-png }}
+        ICON_ICO: ${{ inputs.icon-ico }}
+        PUBLISHER: ${{ inputs.publisher }}
+        HOMEPAGE: ${{ inputs.homepage }}
+        UPGRADE_CODE: ${{ inputs.upgrade-code }}
+        OUT_DIR: ${{ inputs.out-dir }}
+        WINDOWS_CERTIFICATE: ${{ inputs.certificate }}
+        WINDOWS_CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+      run: '& (Join-Path $env:GITHUB_ACTION_PATH package-windows.ps1)'
