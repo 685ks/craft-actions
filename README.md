@@ -1,7 +1,7 @@
 # craft-actions
 
 Reusable GitHub Actions workflow that builds, packages, signs and releases a Rust desktop app (the
-Craft apps: DeckCraft, PhotoCraft, ...) for Windows and Linux, with asset names the
+Craft apps: DeckCraft, PhotoCraft, ...) for Windows, with asset names the
 [Arthavan Projects launcher](https://github.com/685ks/craft-launcher) reads.
 
 One call builds:
@@ -9,10 +9,8 @@ One call builds:
 | Platform | Runner | Assets |
 |---|---|---|
 | Windows x64 | `windows-2025` | `<id>-<version>-windows-x64.msi` (WiX 5), `<id>-<version>-windows-x64-portable.zip` |
-| Linux x86_64 | `ubuntu-22.04` | `.AppImage` (+ `.AppImage.zsync`), `.tar.gz`, `.deb`, `.rpm` |
-| Linux aarch64 | `ubuntu-22.04-arm` | the same, `linux-aarch64` |
 
-and, over all of them, `SHA256SUMS.txt`, `SHA256SUMS.txt.minisig` (when a signing key is set),
+and, over the release, `SHA256SUMS.txt`, `SHA256SUMS.txt.minisig` (when a signing key is set),
 `<id>-<version>-sbom.cdx.json` (CycloneDX), `update-feed.json`, and a build provenance attestation;
 then it creates or updates the GitHub Release `v<version>` on the calling repository (a draft
 unless `publish` is true).
@@ -69,13 +67,11 @@ id = "photocraft"
 display_name = "PhotoCraft"
 bundle_id = "app.freedev.ainz.ks.PhotoCraft"
 description = "Edit photos and raster images"
-categories = ["Graphics", "2DGraphics", "RasterGraphics"]   # freedesktop main/additional categories
 icon_png = "packaging/icon.png"      # square PNG, 512 px or larger
 icon_ico = "packaging/icon.ico"      # optional; made from icon_png when absent
 license = "MIT OR Apache-2.0"
 # Optional:
 # homepage = "https://github.com/685ks/photocraft"          (default: the repository)
-# maintainer = "Ks <ks@example.com>"                        (deb/rpm; default: <owner> <owner@users.noreply.github.com>)
 # publisher = "Ks and contributors"                         (MSI Manufacturer; default: the repository owner)
 # windows_upgrade_code = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"  (default: UUIDv5 of bundle_id, stable)
 ```
@@ -91,8 +87,8 @@ and script it runs is taken from the same commit as the workflow file itself.
 | Input | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `app-id` | string | yes | | Asset stem, lowercase letters, digits and dashes (e.g. `photocraft`). |
-| `display-name` | string | yes | | Product name (e.g. `PhotoCraft`): MSI product name and install folder, `<display-name>.app`, desktop entry. |
-| `bundle-id` | string | yes | | Reverse-DNS id (e.g. `app.freedev.ainz.ks.PhotoCraft`): `CFBundleIdentifier`, desktop file and icon name, MSI upgrade code seed. |
+| `display-name` | string | yes | | Product name (e.g. `PhotoCraft`): MSI product name and install folder. |
+| `bundle-id` | string | yes | | Reverse-DNS id (e.g. `app.freedev.ainz.ks.PhotoCraft`): MSI upgrade code seed. |
 | `version` | string | yes | | Semantic version, e.g. `1.2.3`, `1.2.3-rc.1` (a leading `v` is dropped; no `+build`). The tag is `v<version>`. |
 | `package` | string | yes | | Cargo package of the app binary. |
 | `bin` | string | yes | | Binary name. |
@@ -101,7 +97,7 @@ and script it runs is taken from the same commit as the workflow file itself.
 | `prerelease` | boolean | no | `false` | Mark the release as a pre-release. Versions with a `-` are always pre-releases. |
 | `dry-run` | boolean | no | `false` | Build, package, check and sign, but create no release (assets stay in the `craft-assets` artifact). |
 | `working-directory` | string | no | `.` | The app's directory, holding its Cargo workspace and `packaging/app.toml`. |
-| `linux-packages` | string | no | common egui/winit/GTK headers | Ubuntu packages installed before the Linux builds. |
+| `linux-packages` | string | no | `""` | Ignored: Linux builds were dropped. Still accepted so existing callers keep working. |
 
 ### Secrets (all optional; steps that need one skip when it is absent)
 
@@ -123,19 +119,13 @@ and script it runs is taken from the same commit as the workflow file itself.
 ### Asset names
 
 Packages are named `<app-id>-<version>-<os>-<arch>[-portable].<ext>` with the platform tokens
-`windows-x64`, `linux-x86_64` and `linux-aarch64` (the grammar of
+`windows-x64` (the grammar of
 `parse_asset_name` in craft-launcher's `crates/core/src/platform.rs`). The workflow checks every
 file against that grammar before anything is signed or uploaded (`scripts/asset_names.py`), and
-checks that the auxiliary files (checksums, signature, SBOM, feed, zsync) do *not* read as packages.
+checks that the auxiliary files (checksums, signature, SBOM, feed) do *not* read as packages.
 
 ### What goes into the packages
 
-- **Linux tarball**: `<id>-<version>-linux-<arch>/bin/<bin>`, `share/applications/<bundle-id>.desktop`,
-  `share/icons/hicolor/<N>x<N>/apps/<bundle-id>.png`, `share/doc/<id>/` (LICENSE*, NOTICE*, README.md).
-- **deb / rpm** (nfpm): the same tree under `/usr`. Pre-release versions use `~` (`1.2.3~rc.1`).
-- **AppImage** (appimagetool): the same tree in `usr/`, with update information
-  `gh-releases-zsync|<owner>|<repo>|latest|<id>-*-linux-<arch>.AppImage.zsync`, so AppImageUpdate
-  updates from the latest release.
 - **Windows MSI**: per-machine install into `Program Files\<display-name>\<bin>.exe`, Start menu
   shortcut, `InstallLocation` recorded, major upgrades (same upgrade code for every version).
   MSI versions are numeric, so `1.2.3-rc.1` installs as `1.2.3`. The portable zip has `<bin>.exe` at
@@ -163,14 +153,15 @@ always serves the newest stable one (pre-releases are never marked latest):
   "checksums_url": "https://github.com/685ks/photocraft/releases/download/v1.2.3/SHA256SUMS.txt",
   "signature_url": "https://github.com/685ks/photocraft/releases/download/v1.2.3/SHA256SUMS.txt.minisig",
   "platforms": {
-    "linux-x86_64": [
-      { "kind": "appimage", "name": "photocraft-1.2.3-linux-x86_64.AppImage", "size": 123, "sha256": "…", "url": "…" }
+    "windows-x64": [
+      { "kind": "msi", "name": "photocraft-1.2.3-windows-x64.msi", "size": 123, "sha256": "…", "url": "…" },
+      { "kind": "portable-zip", "name": "photocraft-1.2.3-windows-x64-portable.zip", "size": 123, "sha256": "…", "url": "…" }
     ]
   }
 }
 ```
 
-Kinds are `msi`, `portable-zip`, `appimage`, `tar.gz`, `deb` and `rpm`. The feed is listed in
+Kinds are `msi` and `portable-zip`. The feed is listed in
 `SHA256SUMS.txt`, so a verified signature covers it; `signature_url` is `null` for unsigned releases.
 
 ### Re-running and safety
@@ -178,8 +169,7 @@ Kinds are `msi`, `portable-zip`, `appimage`, `tar.gz`, `deb` and `rpm`. The feed
 - A draft release with the same tag is updated in place (assets replaced, stale ones removed); a
   **published** release is never modified: release a new version instead.
 - If the tag already exists it must point at the commit being built.
-- Every third-party action is pinned by commit SHA; every downloaded tool (appimagetool, the
-  AppImage runtime, nfpm, cargo-cyclonedx) is pinned by version and SHA-256; WiX comes from NuGet at
+- Every third-party action is pinned by commit SHA; every downloaded tool (cargo-cyclonedx) is pinned by version and SHA-256; WiX comes from NuGet at
   a fixed version; inputs reach shell scripts only through `env:`; each job gets only the
   permissions it needs.
 - Provenance: `gh attestation verify <file> --repo <owner>/<repo>` checks any asset.
@@ -190,10 +180,9 @@ Kinds are `msi`, `portable-zip`, `appimage`, `tar.gz`, `deb` and `rpm`. The feed
 .github/workflows/release-rust-app.yml   the reusable workflow
 .github/workflows/ci.yml                 lint (actionlint, shellcheck, zizmor), script tests, and an
                                          end-to-end dry run on test-fixtures/hello-craft that installs
-                                         and runs the results on Linux and Windows
+                                         and runs the results on Windows
 actions/setup-rust                       toolchain (rust-toolchain.toml aware) and targets
 actions/build-rust                       cargo build --release --locked of one binary
-actions/package-linux                    AppImage, tar.gz, deb, rpm
 actions/package-windows                  MSI (WiX), portable zip, signtool
 actions/sbom                             CycloneDX SBOM (cargo-cyclonedx)
 actions/checksums-and-sign               SHA256SUMS.txt and minisign signature

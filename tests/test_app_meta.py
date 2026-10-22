@@ -90,6 +90,12 @@ class AppMeta(unittest.TestCase):
             (d / "packaging" / "app.toml").write_text(
                 'description = "x"\ncategories = ["Graphics"]\nicon_png = "../icon.png"\nlicense = "MIT"\n')
             self.assertNotEqual(run(d)[0], 0)
+            # categories are optional now that no Linux package uses them, but checked when given
+            (d / "packaging" / "app.toml").write_text('description = "x"\nicon_png = "packaging/icon.png"\nlicense = "MIT"\n')
+            self.assertEqual(run(d)[0], 0)
+            (d / "packaging" / "app.toml").write_text(
+                'description = "x"\ncategories = "Graphics"\nicon_png = "packaging/icon.png"\nlicense = "MIT"\n')
+            self.assertNotEqual(run(d)[0], 0)
 
 
 if __name__ == "__main__":

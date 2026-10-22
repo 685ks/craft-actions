@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import asset_names as an  # noqa: E402
 
-TOKENS = ["windows-x64", "linux-x86_64", "linux-aarch64"]
+TOKENS = ["windows-x64"]
 
 
 class Parse(unittest.TestCase):
@@ -58,8 +58,7 @@ class Names(unittest.TestCase):
 
     def full_release(self, app="hello-craft", version="0.1.0"):
         names = [an.asset_name(app, version, t, k) for t, ks in an.EXPECTED.items() for k in ks]
-        names += ["SHA256SUMS.txt", "SHA256SUMS.txt.minisig", "update-feed.json", f"{app}-{version}-sbom.cdx.json",
-                  f"{app}-{version}-linux-x86_64.AppImage.zsync"]
+        names += ["SHA256SUMS.txt", "SHA256SUMS.txt.minisig", "update-feed.json", f"{app}-{version}-sbom.cdx.json"]
         return names
 
     def test_a_full_release_checks_out(self):
@@ -68,14 +67,16 @@ class Names(unittest.TestCase):
     def test_problems_are_reported(self):
         names = self.full_release()
         names.remove("hello-craft-0.1.0-windows-x64.msi")
-        names.append("hello-craft-0.1.1-linux-x86_64.deb")
+        names.append("hello-craft-0.1.1-windows-x64-portable.zip")
         names.append("notes.txt")
-        names.append("hello-craft-0.1.0-linux-riscv64.tar.gz")
+        names.append("hello-craft-0.1.0-linux-x86_64.tar.gz")
+        names.append("hello-craft-0.1.0-linux-x86_64.AppImage.zsync")
         problems = "\n".join(an.check(names, "hello-craft", "0.1.0", True))
         self.assertIn("missing hello-craft-0.1.0-windows-x64.msi", problems)
         self.assertIn("version '0.1.1'", problems)
         self.assertIn("notes.txt", problems)
-        self.assertIn("linux-riscv64", problems)
+        self.assertIn("platform 'linux-x86_64'", problems)
+        self.assertIn("hello-craft-0.1.0-linux-x86_64.AppImage.zsync: not a package name", problems)
 
     def test_the_built_tokens_are_the_contract(self):
         self.assertEqual(sorted(an.EXPECTED), sorted(TOKENS))

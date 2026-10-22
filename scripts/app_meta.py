@@ -127,8 +127,9 @@ def main() -> int:
 
     description = single_line("packaging/app.toml description", str(meta.get("description", "")), 300)
     categories = meta.get("categories", [])
-    if not isinstance(categories, list) or not categories or not all(isinstance(c, str) and CATEGORY.match(c) for c in categories):
-        error(f"packaging/app.toml categories must be a non-empty list of freedesktop categories, got {categories!r}")
+    # Optional: only the Linux packages (no longer built) used the freedesktop categories.
+    if not isinstance(categories, list) or not all(isinstance(c, str) and CATEGORY.match(c) for c in categories):
+        error(f"packaging/app.toml categories, when given, must be a list of freedesktop categories, got {categories!r}")
         categories = []
     license_ = single_line("packaging/app.toml license", str(meta.get("license", "")), 100)
     icon_png = rel_file(app_dir, "icon_png", meta.get("icon_png"), True)
