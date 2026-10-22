@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import asset_names as an  # noqa: E402
 
-TOKENS = ["windows-x64", "macos-universal", "linux-x86_64", "linux-aarch64"]
+TOKENS = ["windows-x64", "linux-x86_64", "linux-aarch64"]
 
 
 class Parse(unittest.TestCase):
@@ -77,7 +77,7 @@ class Names(unittest.TestCase):
         self.assertIn("notes.txt", problems)
         self.assertIn("linux-riscv64", problems)
 
-    def test_the_launcher_tokens_are_the_contract(self):
+    def test_the_built_tokens_are_the_contract(self):
         self.assertEqual(sorted(an.EXPECTED), sorted(TOKENS))
 
 

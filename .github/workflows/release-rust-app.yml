@@ -1,4 +1,4 @@
-# Builds a Rust desktop app for Windows x64, macOS (universal) and Linux (x86_64, aarch64), packages
+# Builds a Rust desktop app for Windows x64 and Linux (x86_64, aarch64), packages
 # it, writes checksums, an optional minisign signature, a CycloneDX SBOM, an update feed and build
 # provenance, and creates (or updates) the GitHub Release v<version> on the calling repository.
 #
@@ -27,7 +27,7 @@ on:
         type: string
         required: true
       display-name:
-        description: Human-readable product name (e.g. PhotoCraft); also the macOS bundle name <display-name>.app.
+        description: Human-readable product name (e.g. PhotoCraft).
         type: string
         required: true
       bundle-id:
@@ -82,21 +82,6 @@ on:
       RELEASE_SIGNING_KEY:
         description: Unencrypted minisign secret key; signs SHA256SUMS.txt as SHA256SUMS.txt.minisig.
         required: false
-      MACOS_CERTIFICATE:
-        description: Base64-encoded Developer ID Application certificate (.p12).
-        required: false
-      MACOS_CERTIFICATE_PASSWORD:
-        description: Password of MACOS_CERTIFICATE.
-        required: false
-      APPLE_ID:
-        description: Apple ID used to notarize.
-        required: false
-      APPLE_TEAM_ID:
-        description: Apple Developer team ID.
-        required: false
-      APPLE_APP_PASSWORD:
-        description: App-specific password of APPLE_ID.
-        required: false
       WINDOWS_CERTIFICATE:
         description: Base64-encoded code signing certificate (.pfx).
         required: false
@@ -141,7 +126,6 @@ jobs:
       description: ${{ steps.meta.outputs.description }}
       categories: ${{ steps.meta.outputs.categories }}
       icon-png: ${{ steps.meta.outputs.icon-png }}
-      icon-icns: ${{ steps.meta.outputs.icon-icns }}
       icon-ico: ${{ steps.meta.outputs.icon-ico }}
       license: ${{ steps.meta.outputs.license }}
       homepage: ${{ steps.meta.outputs.homepage }}
@@ -289,76 +273,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  macos:
-    name: macOS universal
-    needs: prepare
-    runs-on: macos-15
-    timeout-minutes: 120
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ needs.prepare.outputs.actions-repo }}
-          ref: ${{ needs.prepare.outputs.actions-sha }}
-          path: .craft-actions
-          persist-credentials: false
-
-      - uses: ./.craft-actions/actions/setup-rust
-        with:
-          targets: aarch64-apple-darwin x86_64-apple-darwin
-          working-directory: ${{ inputs.working-directory }}
-
-      - id: arm64
-        uses: ./.craft-actions/actions/build-rust
-        with:
-          working-directory: ${{ inputs.working-directory }}
-          package: ${{ inputs.package }}
-          bin: ${{ inputs.bin }}
-          features: ${{ needs.prepare.outputs.features }}
-          target: aarch64-apple-darwin
-          version: ${{ needs.prepare.outputs.version }}
-
-      - id: x86_64
-        uses: ./.craft-actions/actions/build-rust
-        with:
-          working-directory: ${{ inputs.working-directory }}
-          package: ${{ inputs.package }}
-          bin: ${{ inputs.bin }}
-          features: ${{ needs.prepare.outputs.features }}
-          target: x86_64-apple-darwin
-          version: ${{ needs.prepare.outputs.version }}
-
-      - uses: ./.craft-actions/actions/package-macos
-        with:
-          app-id: ${{ inputs.app-id }}
-          display-name: ${{ inputs.display-name }}
-          bundle-id: ${{ inputs.bundle-id }}
-          version: ${{ needs.prepare.outputs.version }}
-          numeric-version: ${{ needs.prepare.outputs.numeric-version }}
-          bin: ${{ inputs.bin }}
-          binary-arm64: ${{ steps.arm64.outputs.binary }}
-          binary-x86_64: ${{ steps.x86_64.outputs.binary }}
-          icon-png: ${{ needs.prepare.outputs.icon-png }}
-          icon-icns: ${{ needs.prepare.outputs.icon-icns }}
-          working-directory: ${{ inputs.working-directory }}
-          out-dir: ${{ runner.temp }}/craft-dist
-          certificate: ${{ secrets.MACOS_CERTIFICATE }}
-          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          apple-id: ${{ secrets.APPLE_ID }}
-          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          apple-app-password: ${{ secrets.APPLE_APP_PASSWORD }}
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: craft-release-macos-universal
-          path: ${{ runner.temp }}/craft-dist/
-          if-no-files-found: error
-          retention-days: 7
-
   windows:
     name: Windows x64
     needs: prepare
@@ -456,7 +370,7 @@ jobs:
 
   finalize:
     name: Checksums, signature and provenance
-    needs: [prepare, linux, macos, windows, sbom]
+    needs: [prepare, linux, windows, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

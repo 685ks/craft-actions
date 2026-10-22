@@ -51,7 +51,6 @@ SEMVER = re.compile(rf"^{_NUM}\.{_NUM}\.{_NUM}(?:-{_PRE_ID}(?:\.{_PRE_ID})*)?(?:
 # What the release workflow builds, per platform token. Tokens are the launcher's.
 EXPECTED = {
     "windows-x64": ("msi", "portable-zip"),
-    "macos-universal": ("dmg",),
     "linux-x86_64": ("appimage", "tar.gz", "deb", "rpm"),
     "linux-aarch64": ("appimage", "tar.gz", "deb", "rpm"),
 }
