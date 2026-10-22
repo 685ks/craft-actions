@@ -149,7 +149,7 @@ jobs:
           feed = json.loads(Path("assets/update-feed.json").read_text())
           v = os.environ["VERSION"]
           assert feed["version"] == v and feed["tag"] == f"v{v}" and feed["id"] == "hello-craft", feed
-          assert sorted(feed["platforms"]) == ["linux-aarch64", "linux-x86_64", "macos-universal", "windows-x64"], feed["platforms"]
+          assert sorted(feed["platforms"]) == ["linux-aarch64", "linux-x86_64", "windows-x64"], feed["platforms"]
           for entries in feed["platforms"].values():
               for e in entries:
                   data = Path("assets", e["name"]).read_bytes()
@@ -193,41 +193,6 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends rpm
           rpm -qip "assets/hello-craft-$VERSION-linux-$ARCH.rpm"
           rpm -qlp "assets/hello-craft-$VERSION-linux-$ARCH.rpm" | grep -x /usr/bin/hello-craft
-
-  verify-macos:
-    name: Install and run (macOS)
-    needs: [version, self-test]
-    runs-on: macos-15
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ needs.self-test.outputs.assets-artifact }}
-          path: assets
-      - name: Mount the DMG and run the app
-        run: |
-          set -euo pipefail
-          dmg="assets/hello-craft-$VERSION-macos-universal.dmg"
-          mnt="$(mktemp -d)"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
-          app="$mnt/HelloCraft.app"
-          ls -la "$mnt"
-          test -L "$mnt/Applications"
-          plutil -p "$app/Contents/Info.plist"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = app.freedev.ainz.ks.HelloCraft
-          test "$(/usr/libexec/PlistBuddy -c 'Print :HelloCraftVersion' "$app/Contents/Info.plist")" = "$VERSION"
-          lipo -archs "$app/Contents/MacOS/hello-craft"
-          codesign --verify --strict --verbose=2 "$app"
-          test -f "$app/Contents/Resources/AppIcon.icns"
-          out="$("$app/Contents/MacOS/hello-craft" --version)"
-          echo "$out"
-          test "$out" = "hello-craft $VERSION"
-          arch -x86_64 "$app/Contents/MacOS/hello-craft" --version
-          hdiutil detach "$mnt"
 
   verify-windows:
     name: Install and run (Windows)

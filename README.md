@@ -1,7 +1,7 @@
 # craft-actions
 
 Reusable GitHub Actions workflow that builds, packages, signs and releases a Rust desktop app (the
-Craft apps: DeckCraft, PhotoCraft, ...) for Windows, macOS and Linux, with asset names the
+Craft apps: DeckCraft, PhotoCraft, ...) for Windows and Linux, with asset names the
 [Arthavan Projects launcher](https://github.com/685ks/craft-launcher) reads.
 
 One call builds:
@@ -9,7 +9,6 @@ One call builds:
 | Platform | Runner | Assets |
 |---|---|---|
 | Windows x64 | `windows-2025` | `<id>-<version>-windows-x64.msi` (WiX 5), `<id>-<version>-windows-x64-portable.zip` |
-| macOS universal (arm64 + x86_64, `lipo`) | `macos-15` | `<id>-<version>-macos-universal.dmg` holding `<DisplayName>.app` |
 | Linux x86_64 | `ubuntu-22.04` | `.AppImage` (+ `.AppImage.zsync`), `.tar.gz`, `.deb`, `.rpm` |
 | Linux aarch64 | `ubuntu-22.04-arm` | the same, `linux-aarch64` |
 
@@ -72,7 +71,6 @@ bundle_id = "app.freedev.ainz.ks.PhotoCraft"
 description = "Edit photos and raster images"
 categories = ["Graphics", "2DGraphics", "RasterGraphics"]   # freedesktop main/additional categories
 icon_png = "packaging/icon.png"      # square PNG, 512 px or larger
-icon_icns = "packaging/icon.icns"    # optional; made from icon_png when absent
 icon_ico = "packaging/icon.ico"      # optional; made from icon_png when absent
 license = "MIT OR Apache-2.0"
 # Optional:
@@ -110,11 +108,6 @@ and script it runs is taken from the same commit as the workflow file itself.
 | Secret | Used for |
 |---|---|
 | `RELEASE_SIGNING_KEY` | Unencrypted [minisign](https://jedisct1.github.io/minisign/) secret key (both lines). Signs `SHA256SUMS.txt` as `SHA256SUMS.txt.minisig` with the trusted comment `<display-name> v<version>`, which the launcher checks against the tag. Make one with `minisign -G -W`; see craft-launcher's `docs/release-signing.md`. |
-| `MACOS_CERTIFICATE` | Base64 of a *Developer ID Application* `.p12`. Without it the app is signed ad hoc. |
-| `MACOS_CERTIFICATE_PASSWORD` | Password of that `.p12`. |
-| `APPLE_ID` | Apple ID used with `notarytool`. Notarization runs when this, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` and the certificate are all set; the DMG is then stapled. |
-| `APPLE_TEAM_ID` | Developer team ID. |
-| `APPLE_APP_PASSWORD` | App-specific password of `APPLE_ID`. |
 | `WINDOWS_CERTIFICATE` | Base64 of a code signing `.pfx`; `signtool` signs the exe and the MSI (timestamped). |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Password of that `.pfx`. |
 
@@ -130,7 +123,7 @@ and script it runs is taken from the same commit as the workflow file itself.
 ### Asset names
 
 Packages are named `<app-id>-<version>-<os>-<arch>[-portable].<ext>` with the platform tokens
-`windows-x64`, `macos-universal`, `linux-x86_64` and `linux-aarch64` (the grammar of
+`windows-x64`, `linux-x86_64` and `linux-aarch64` (the grammar of
 `parse_asset_name` in craft-launcher's `crates/core/src/platform.rs`). The workflow checks every
 file against that grammar before anything is signed or uploaded (`scripts/asset_names.py`), and
 checks that the auxiliary files (checksums, signature, SBOM, feed, zsync) do *not* read as packages.
@@ -143,9 +136,6 @@ checks that the auxiliary files (checksums, signature, SBOM, feed, zsync) do *no
 - **AppImage** (appimagetool): the same tree in `usr/`, with update information
   `gh-releases-zsync|<owner>|<repo>|latest|<id>-*-linux-<arch>.AppImage.zsync`, so AppImageUpdate
   updates from the latest release.
-- **macOS**: `<display-name>.app` with `Info.plist` (`CFBundleIdentifier` = bundle id,
-  `CFBundleShortVersionString` = `x.y.z`, and `<display-name>Version` = the full version, which the
-  launcher reads first), `AppIcon.icns`, signed (Developer ID with hardened runtime, or ad hoc).
 - **Windows MSI**: per-machine install into `Program Files\<display-name>\<bin>.exe`, Start menu
   shortcut, `InstallLocation` recorded, major upgrades (same upgrade code for every version).
   MSI versions are numeric, so `1.2.3-rc.1` installs as `1.2.3`. The portable zip has `<bin>.exe` at
@@ -180,7 +170,7 @@ always serves the newest stable one (pre-releases are never marked latest):
 }
 ```
 
-Kinds are `msi`, `portable-zip`, `dmg`, `appimage`, `tar.gz`, `deb` and `rpm`. The feed is listed in
+Kinds are `msi`, `portable-zip`, `appimage`, `tar.gz`, `deb` and `rpm`. The feed is listed in
 `SHA256SUMS.txt`, so a verified signature covers it; `signature_url` is `null` for unsigned releases.
 
 ### Re-running and safety
@@ -200,11 +190,10 @@ Kinds are `msi`, `portable-zip`, `dmg`, `appimage`, `tar.gz`, `deb` and `rpm`. T
 .github/workflows/release-rust-app.yml   the reusable workflow
 .github/workflows/ci.yml                 lint (actionlint, shellcheck, zizmor), script tests, and an
                                          end-to-end dry run on test-fixtures/hello-craft that installs
-                                         and runs the results on Linux, macOS and Windows
+                                         and runs the results on Linux and Windows
 actions/setup-rust                       toolchain (rust-toolchain.toml aware) and targets
 actions/build-rust                       cargo build --release --locked of one binary
 actions/package-linux                    AppImage, tar.gz, deb, rpm
-actions/package-macos                    universal binary, .app, codesign, notarize, DMG
 actions/package-windows                  MSI (WiX), portable zip, signtool
 actions/sbom                             CycloneDX SBOM (cargo-cyclonedx)
 actions/checksums-and-sign               SHA256SUMS.txt and minisign signature
