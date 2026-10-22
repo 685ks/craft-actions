@@ -5,13 +5,13 @@ Every package a release ships is named
 
     <app-id>-<version>-<os>-<arch>[-portable].<ext>
 
-for example ``photocraft-0.5.0-windows-x64.msi`` or ``photocraft-0.2.0-rc.1-linux-aarch64.AppImage``.
+for example ``photocraft-0.5.0-windows-x64.msi`` or ``photocraft-0.2.0-rc.1-windows-x64-portable.zip``.
 ``parse()`` reads a name the same way the launcher does (crates/core/src/platform.rs,
 ``parse_asset_name`` in 685ks/craft-launcher): strip a known package suffix, strip ``<app-id>-``, then
 split the rest from the right into version, os and arch (os and arch never contain ``-``; versions
 may). The version must be a semantic version that starts with a digit.
 
-Everything else a release carries (checksums, signatures, the SBOM, the update feed, zsync files) must
+Everything else a release carries (checksums, signatures, the SBOM, the update feed) must
 *not* read as a package, so the launcher never offers it as a download.
 
 Usage:
@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 from typing import NamedTuple, Optional, Sequence
 
-# Package kinds in the order the launcher tries their suffixes. "-portable.zip" must come before any
+# Package kinds in the order the launcher tries their suffixes (the launcher's whole grammar, including
+# kinds no release builds any more, so old names still parse the same way). "-portable.zip" must come before any
 # plain ".zip" (there is none), and ".tar.gz" before anything ending in ".gz".
 KINDS: Sequence[tuple[str, str]] = (
     ("portable-zip", "-portable.zip"),
@@ -51,8 +52,6 @@ SEMVER = re.compile(rf"^{_NUM}\.{_NUM}\.{_NUM}(?:-{_PRE_ID}(?:\.{_PRE_ID})*)?(?:
 # What the release workflow builds, per platform token. Tokens are the launcher's.
 EXPECTED = {
     "windows-x64": ("msi", "portable-zip"),
-    "linux-x86_64": ("appimage", "tar.gz", "deb", "rpm"),
-    "linux-aarch64": ("appimage", "tar.gz", "deb", "rpm"),
 }
 
 # Files that are allowed in a release but are not packages.
@@ -104,8 +103,6 @@ def is_aux(name: str, app_id: str, version: str) -> bool:
     if name in AUX_FIXED:
         return True
     if name == f"{app_id}-{version}-sbom.cdx.json":
-        return True
-    if name.endswith(".AppImage.zsync"):
         return True
     return False
 

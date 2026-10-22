@@ -1,6 +1,6 @@
 # Lints the workflows and scripts, runs the script tests, and runs the release workflow end to end
-# (dry run, no GitHub Release) on test-fixtures/hello-craft, then installs and runs what it made on
-# every platform.
+# (dry run, no GitHub Release) on test-fixtures/hello-craft, checks the asset set, then installs and
+# runs what it made on Windows.
 
 name: CI
 
@@ -114,22 +114,16 @@ jobs:
       dry-run: true
       working-directory: test-fixtures/hello-craft
 
-  verify-linux:
-    name: Install and run (Linux ${{ matrix.arch }})
+  verify-assets:
+    # Platform-neutral checks of the release files; the packages themselves run on Windows below.
+    name: Checksums, names, feed, SBOM
     needs: [version, self-test]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64, runner: ubuntu-24.04 }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -149,7 +143,7 @@ jobs:
           feed = json.loads(Path("assets/update-feed.json").read_text())
           v = os.environ["VERSION"]
           assert feed["version"] == v and feed["tag"] == f"v{v}" and feed["id"] == "hello-craft", feed
-          assert sorted(feed["platforms"]) == ["linux-aarch64", "linux-x86_64", "windows-x64"], feed["platforms"]
+          assert sorted(feed["platforms"]) == ["windows-x64"], feed["platforms"]
           for entries in feed["platforms"].values():
               for e in entries:
                   data = Path("assets", e["name"]).read_bytes()
@@ -157,42 +151,6 @@ jobs:
           print("update-feed.json is consistent")
           PY
           jq -e '.bomFormat == "CycloneDX" and (.metadata.component.name == "hello-craft")' assets/hello-craft-*-sbom.cdx.json
-      - name: tar.gz
-        run: |
-          set -euo pipefail
-          base="hello-craft-$VERSION-linux-$ARCH"
-          mkdir t && tar -xzf "assets/$base.tar.gz" -C t
-          find t -type f | sort
-          test -f "t/$base/share/applications/app.freedev.ainz.ks.HelloCraft.desktop"
-          test -f "t/$base/share/icons/hicolor/512x512/apps/app.freedev.ainz.ks.HelloCraft.png"
-          out="$("t/$base/bin/hello-craft" --version)"
-          echo "$out"
-          test "$out" = "hello-craft $VERSION"
-      - name: AppImage
-        run: |
-          set -euo pipefail
-          app="assets/hello-craft-$VERSION-linux-$ARCH.AppImage"
-          test -s "$app.zsync"
-          # Workflow artifacts do not keep file modes; a downloaded AppImage needs chmod +x too.
-          chmod +x "$app"
-          out="$(APPIMAGE_EXTRACT_AND_RUN=1 "$app" --version)"
-          echo "$out"
-          test "$out" = "hello-craft $VERSION"
-      - name: deb
-        run: |
-          set -euo pipefail
-          deb="assets/hello-craft-$VERSION-linux-$ARCH.deb"
-          dpkg-deb --info "$deb"
-          sudo apt-get install -y -qq "./$deb"
-          test "$(hello-craft --version)" = "hello-craft $VERSION"
-          test -f /usr/share/applications/app.freedev.ainz.ks.HelloCraft.desktop
-          sudo apt-get remove -y -qq hello-craft
-      - name: rpm
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y -qq --no-install-recommends rpm
-          rpm -qip "assets/hello-craft-$VERSION-linux-$ARCH.rpm"
-          rpm -qlp "assets/hello-craft-$VERSION-linux-$ARCH.rpm" | grep -x /usr/bin/hello-craft
 
   verify-windows:
     name: Install and run (Windows)

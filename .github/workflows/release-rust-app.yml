@@ -1,6 +1,5 @@
-# Builds a Rust desktop app for Windows x64 and Linux (x86_64, aarch64), packages
-# it, writes checksums, an optional minisign signature, a CycloneDX SBOM, an update feed and build
-# provenance, and creates (or updates) the GitHub Release v<version> on the calling repository.
+# Builds a Rust desktop app for Windows x64, packages it (MSI and portable zip), writes checksums,
+# an optional minisign signature, a CycloneDX SBOM, an update feed and build provenance, and creates (or updates) the GitHub Release v<version> on the calling repository.
 #
 # Callers (see README.md):
 #
@@ -72,12 +71,10 @@ on:
         required: false
         default: "."
       linux-packages:
-        description: Ubuntu packages to install before building on Linux (headers the app links against).
+        description: Ignored. Linux builds were dropped (the apps ship for Windows only); kept so callers that still pass it keep working.
         type: string
         required: false
-        default: >-
-          pkg-config libssl-dev libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev
-          libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev
+        default: ""
     secrets:
       RELEASE_SIGNING_KEY:
         description: Unencrypted minisign secret key; signs SHA256SUMS.txt as SHA256SUMS.txt.minisig.
@@ -124,12 +121,9 @@ jobs:
       numeric-version: ${{ steps.meta.outputs.numeric-version }}
       msi-version: ${{ steps.meta.outputs.msi-version }}
       description: ${{ steps.meta.outputs.description }}
-      categories: ${{ steps.meta.outputs.categories }}
       icon-png: ${{ steps.meta.outputs.icon-png }}
       icon-ico: ${{ steps.meta.outputs.icon-ico }}
-      license: ${{ steps.meta.outputs.license }}
       homepage: ${{ steps.meta.outputs.homepage }}
-      maintainer: ${{ steps.meta.outputs.maintainer }}
       publisher: ${{ steps.meta.outputs.publisher }}
       upgrade-code: ${{ steps.meta.outputs.upgrade-code }}
       features: ${{ steps.meta.outputs.features }}
@@ -193,85 +187,6 @@ jobs:
             /* | *..*) echo "::error::working-directory must be a relative path inside the repository"; exit 1 ;;
           esac
           python3 .craft-actions/scripts/app_meta.py
-
-  linux:
-    name: Linux ${{ matrix.arch }}
-    needs: prepare
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The oldest supported Ubuntu, so the binaries' glibc requirement stays low.
-          - arch: x86_64
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - arch: aarch64
-            runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ needs.prepare.outputs.actions-repo }}
-          ref: ${{ needs.prepare.outputs.actions-sha }}
-          path: .craft-actions
-          persist-credentials: false
-
-      - name: Install system packages
-        env:
-          PACKAGES: ${{ inputs.linux-packages }}
-        run: |
-          set -euo pipefail
-          read -r -a pkgs <<<"$PACKAGES"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends desktop-file-utils zsync "${pkgs[@]}"
-
-      - uses: ./.craft-actions/actions/setup-rust
-        with:
-          targets: ${{ matrix.target }}
-          working-directory: ${{ inputs.working-directory }}
-
-      - id: build
-        uses: ./.craft-actions/actions/build-rust
-        with:
-          working-directory: ${{ inputs.working-directory }}
-          package: ${{ inputs.package }}
-          bin: ${{ inputs.bin }}
-          features: ${{ needs.prepare.outputs.features }}
-          target: ${{ matrix.target }}
-          version: ${{ needs.prepare.outputs.version }}
-
-      - uses: ./.craft-actions/actions/package-linux
-        with:
-          app-id: ${{ inputs.app-id }}
-          display-name: ${{ inputs.display-name }}
-          bundle-id: ${{ inputs.bundle-id }}
-          version: ${{ needs.prepare.outputs.version }}
-          bin: ${{ inputs.bin }}
-          binary: ${{ steps.build.outputs.binary }}
-          arch: ${{ matrix.arch }}
-          description: ${{ needs.prepare.outputs.description }}
-          categories: ${{ needs.prepare.outputs.categories }}
-          icon-png: ${{ needs.prepare.outputs.icon-png }}
-          license: ${{ needs.prepare.outputs.license }}
-          homepage: ${{ needs.prepare.outputs.homepage }}
-          maintainer: ${{ needs.prepare.outputs.maintainer }}
-          repository: ${{ github.repository }}
-          working-directory: ${{ inputs.working-directory }}
-          out-dir: ${{ runner.temp }}/craft-dist
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: craft-release-linux-${{ matrix.arch }}
-          path: ${{ runner.temp }}/craft-dist/
-          if-no-files-found: error
-          retention-days: 7
 
   windows:
     name: Windows x64
@@ -370,7 +285,7 @@ jobs:
 
   finalize:
     name: Checksums, signature and provenance
-    needs: [prepare, linux, windows, sbom]
+    needs: [prepare, windows, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
